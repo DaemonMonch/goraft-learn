@@ -45,6 +45,7 @@ type State struct {
 	epoch        int
 	electTimeout time.Duration
 	config       *Config
+	electTimer   *time.Ticker
 
 	networking Networking
 	votes      int
@@ -72,15 +73,16 @@ func NewState(config *Config, networking Networking) *State {
 }
 
 func (s *State) Start(ctx context.Context) error {
-	timer := time.NewTicker(s.electTimeout)
-	defer timer.Stop()
+	s.electTimer = time.NewTicker(s.electTimeout)
+
+	defer s.electTimer.Stop()
 	msgChan, err := s.networking.Recv()
 	if err != nil {
 		return err
 	}
 	for {
 		select {
-		case t := <-timer.C:
+		case t := <-s.electTimer.C:
 			s.onElectTimeout(t)
 		case msg := <-msgChan:
 			s.OnMessage(msg)
@@ -99,12 +101,14 @@ func (s *State) onElectTimeout(ticker time.Time) {
 		logger.Printf("node [%s] state [%d] exceed elect timeout  transit to state [CANDIDATE] \n", s.curNode.String(), s.state)
 		s.state = CANDIDATE_STATE
 		s.epoch += 1
+		s.electTimer.Reset(s.electTimeout)
 		voteReq := NewVoteMsg(s.epoch)
 		s.networking.Broadcast(voteReq)
 
 	} else if s.state == CANDIDATE_STATE {
 		logger.Printf("node [%s] state [%d] exceed elect timeout  , start new elect \n", s.curNode.String(), s.state)
 		s.epoch += 1
+		s.electTimer.Reset(s.electTimeout)
 		voteReq := NewVoteMsg(s.epoch)
 		s.networking.Broadcast(voteReq)
 	}
@@ -167,7 +171,7 @@ func (s *State) startHeartbeat() {
 func (s *State) onHbMsg(msg RaftMessage) {
 	// logger.Printf("node [%s] state [%d] recv hb msg from node [%d], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId, s.leaderId)
 	s.lastHbTime = time.Now()
-	if s.epoch < msg.Epoch {
+	if s.epoch <= msg.Epoch {
 		logger.Printf("node [%s] state [%d] recv hb msg, transit to [FOLLOWER], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId)
 		s.state = FOLLOWER_STATE
 		s.votes = 0
