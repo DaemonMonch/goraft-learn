@@ -167,7 +167,7 @@ func (s *State) startHeartbeat() {
 func (s *State) onHbMsg(msg RaftMessage) {
 	// logger.Printf("node [%s] state [%d] recv hb msg from node [%d], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId, s.leaderId)
 	s.lastHbTime = time.Now()
-	if s.state == FOLLOWER_STATE || s.state == CANDIDATE_STATE {
+	if s.epoch < msg.Epoch {
 		logger.Printf("node [%s] state [%d] recv hb msg, transit to [FOLLOWER], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId)
 		s.state = FOLLOWER_STATE
 		s.votes = 0
