@@ -23,7 +23,7 @@ const (
 	ACK_MESSAGE_TYPE
 )
 
-var logger = log.New(os.Stdout, "raft ", log.Lmsgprefix|log.Ldate|log.Ltime)
+var logger = log.New(os.Stdout, "", log.Lmsgprefix|log.Ldate|log.Ltime)
 
 type Config struct {
 	Nodes         []*Node `json:"nodes"`
