@@ -2,6 +2,7 @@ package goraft
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -130,25 +131,8 @@ func Test5Node(t *testing.T) {
 		},
 	}
 
-	configs := make([]*Config, 0)
-	configs = append(configs, config)
-	for i := 1; i < 5; i++ {
-		c := &Config{HeartbeatTime: config.HeartbeatTime, AckTimeout: config.AckTimeout}
-		c.Nodes = make([]*Node, 5)
-		copy(c.Nodes, config.Nodes)
-		t := c.Nodes[0]
-		c.Nodes[0] = c.Nodes[i]
-		c.Nodes[i] = t
-		configs = append(configs, c)
-	}
-
-	var states []*State
+	states := genStates(config)
 	ctx, cancel := context.WithCancel(context.Background())
-	for _, c := range configs {
-		netw, _ := NewUdpNet(c)
-		s := NewState(c, netw)
-		states = append(states, s)
-	}
 
 	states[2].electTimeout = 50 * time.Millisecond
 	for _, s := range states {
@@ -161,6 +145,12 @@ func Test5Node(t *testing.T) {
 		t.Fail()
 	}
 
+}
+
+func TestRepeatLeaderCrash(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		t.Run(fmt.Sprintf("Run-%d", i), TestLeaderCrash)
+	}
 }
 
 func TestLeaderCrash(t *testing.T) {
@@ -191,25 +181,8 @@ func TestLeaderCrash(t *testing.T) {
 		},
 	}
 
-	configs := make([]*Config, 0)
-	configs = append(configs, config)
-	for i := 1; i < 5; i++ {
-		c := &Config{HeartbeatTime: config.HeartbeatTime, AckTimeout: config.AckTimeout}
-		c.Nodes = make([]*Node, 5)
-		copy(c.Nodes, config.Nodes)
-		t := c.Nodes[0]
-		c.Nodes[0] = c.Nodes[i]
-		c.Nodes[i] = t
-		configs = append(configs, c)
-	}
-
-	var states []*State
+	states := genStates(config)
 	ctx, cancel := context.WithCancel(context.Background())
-	for _, c := range configs {
-		netw, _ := NewUdpNet(c)
-		s := NewState(c, netw)
-		states = append(states, s)
-	}
 
 	ctx1, cancel1 := context.WithCancel(ctx)
 	states[1].electTimeout = 50 * time.Millisecond
@@ -227,8 +200,12 @@ func TestLeaderCrash(t *testing.T) {
 	cancel1()
 	<-time.After(1 * time.Second)
 	cancel()
-	if states[3].leaderId != 3 {
-		t.Fail()
+
+	leaderId := states[0].leaderId
+	for idx, s := range states {
+		if idx != 1 && s.leaderId != leaderId {
+			t.FailNow()
+		}
 	}
 }
 
@@ -260,25 +237,8 @@ func TestMultiCandidates(t *testing.T) {
 		},
 	}
 
-	configs := make([]*Config, 0)
-	configs = append(configs, config)
-	for i := 1; i < 5; i++ {
-		c := &Config{HeartbeatTime: config.HeartbeatTime, AckTimeout: config.AckTimeout}
-		c.Nodes = make([]*Node, 5)
-		copy(c.Nodes, config.Nodes)
-		t := c.Nodes[0]
-		c.Nodes[0] = c.Nodes[i]
-		c.Nodes[i] = t
-		configs = append(configs, c)
-	}
-
-	var states []*State
+	states := genStates(config)
 	ctx, cancel := context.WithCancel(context.Background())
-	for _, c := range configs {
-		netw, _ := NewUdpNet(c)
-		s := NewState(c, netw)
-		states = append(states, s)
-	}
 
 	states[0].electTimeout = 50 * time.Millisecond
 	states[1].electTimeout = 50 * time.Millisecond
@@ -293,4 +253,70 @@ func TestMultiCandidates(t *testing.T) {
 		t.Fail()
 	}
 
+}
+
+func TestNewFollower(t *testing.T) {
+	config := &Config{
+		HeartbeatTime: 10,
+		AckTimeout:    20,
+		Nodes: []*Node{
+			{
+				Id:   1,
+				Addr: "127.0.0.1:18080",
+			},
+			{
+				Id:   2,
+				Addr: "127.0.0.1:18081",
+			},
+			{
+				Id:   3,
+				Addr: "127.0.0.1:18082",
+			},
+			{
+				Id:   4,
+				Addr: "127.0.0.1:18083",
+			},
+			{
+				Id:   5,
+				Addr: "127.0.0.1:18084",
+			},
+		},
+	}
+
+	states := genStates(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	states[1].electTimeout = 50 * time.Millisecond
+	for _, s := range states[1:] {
+		go s.Start(ctx)
+	}
+	<-time.After(500 * time.Millisecond)
+	go states[0].Start(ctx)
+	<-time.After(1 * time.Second)
+	cancel()
+	<-time.After(1 * time.Second)
+	if states[0].leaderId != states[1].leaderId {
+		t.Fail()
+	}
+}
+
+func genStates(config *Config) []*State {
+	configs := make([]*Config, 0)
+	configs = append(configs, config)
+	for i := 1; i < len(config.Nodes); i++ {
+		c := &Config{HeartbeatTime: config.HeartbeatTime, AckTimeout: config.AckTimeout}
+		c.Nodes = make([]*Node, len(config.Nodes))
+		copy(c.Nodes, config.Nodes)
+		t := c.Nodes[0]
+		c.Nodes[0] = c.Nodes[i]
+		c.Nodes[i] = t
+		configs = append(configs, c)
+	}
+
+	var states []*State
+	for _, c := range configs {
+		netw, _ := NewUdpNet(c)
+		s := NewState(c, netw)
+		states = append(states, s)
+	}
+	return states
 }

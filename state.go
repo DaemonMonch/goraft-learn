@@ -163,6 +163,7 @@ func (s *State) onVoteRespMsg(msg RaftMessage) {
 			logger.Printf("node [%s] state [%d] reveive majority vote [%d] from all nodes, transit to state [LEADER]\n", s.curNode.String(), s.state, s.votes)
 			s.state = LEADER_STATE
 			s.voteId = 0
+			s.leaderId = s.curNode.Id
 			s.acks = make(map[int]time.Time)
 			s.hbCloseChan = make(chan struct{})
 			s.startHeartbeat()
@@ -180,7 +181,7 @@ func (s *State) startHeartbeat() {
 				logger.Printf("node [%s] state [%d] stop send hb\n", s.curNode.String(), s.state)
 				return
 			case <-t.C:
-				logger.Printf("node [%s] state [%d] send hb\n", s.curNode.String(), s.state)
+				// logger.Printf("node [%s] state [%d] send hb\n", s.curNode.String(), s.state)
 				s.networking.Broadcast(NewHb(s.epoch))
 			}
 		}
