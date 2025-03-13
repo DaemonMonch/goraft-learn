@@ -88,10 +88,19 @@ func (s *State) Start(ctx context.Context) error {
 			s.OnMessage(msg)
 		case <-ctx.Done():
 			logger.Printf("node [%s] state [%d] stop signal received\n", s.curNode, s.state)
-			s.hbCloseChan <- struct{}{}
+			if s.state == LEADER_STATE {
+				close(s.hbCloseChan)
+			}
+
 			return nil
 		}
 
+	}
+}
+
+func (s *State) resetElectTimer() {
+	if s.electTimer != nil {
+		s.electTimer.Reset(s.electTimeout)
 	}
 }
 
@@ -103,14 +112,14 @@ func (s *State) onElectTimeout(ticker time.Time) {
 		logger.Printf("node [%s] state [%d] exceed elect timeout  transit to state [CANDIDATE] \n", s.curNode.String(), s.state)
 		s.state = CANDIDATE_STATE
 		s.epoch += 1
-		s.electTimer.Reset(s.electTimeout)
+		s.resetElectTimer()
 		voteReq := NewVoteMsg(s.epoch)
 		s.networking.Broadcast(voteReq)
 
 	} else if s.state == CANDIDATE_STATE {
 		logger.Printf("node [%s] state [%d] exceed elect timeout  , start new elect \n", s.curNode.String(), s.state)
 		s.epoch += 1
-		s.electTimer.Reset(s.electTimeout)
+		s.resetElectTimer()
 		voteReq := NewVoteMsg(s.epoch)
 		s.networking.Broadcast(voteReq)
 	}
@@ -150,6 +159,7 @@ func (s *State) onVoteRespMsg(msg RaftMessage) {
 			s.state = LEADER_STATE
 			s.voteId = 0
 			s.acks = make(map[int]time.Time)
+			s.hbCloseChan = make(chan struct{})
 			s.startHeartbeat()
 		}
 	}
@@ -175,13 +185,14 @@ func (s *State) startHeartbeat() {
 func (s *State) onHbMsg(msg RaftMessage) {
 	// logger.Printf("node [%s] state [%d] recv hb msg from node [%d], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId, s.leaderId)
 	s.lastHbTime = time.Now()
-	if s.epoch <= msg.Epoch {
+	if s.epoch < msg.Epoch {
 		logger.Printf("node [%s] state [%d] recv hb msg, transit to [FOLLOWER], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId)
 		s.state = FOLLOWER_STATE
 		s.votes = 0
 		s.voteId = 0
 		s.epoch = msg.Epoch
 		s.leaderId = msg.NodeId
+		s.resetElectTimer()
 	}
 
 	ack := NewAckMsg(s.epoch)
