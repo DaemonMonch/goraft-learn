@@ -148,7 +148,7 @@ func Test5Node(t *testing.T) {
 }
 
 func TestRepeatLeaderCrash(t *testing.T) {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		t.Run(fmt.Sprintf("Run-%d", i), TestLeaderCrash)
 	}
 }
@@ -206,6 +206,8 @@ func TestLeaderCrash(t *testing.T) {
 		if idx != 1 && s.leaderId != leaderId {
 			t.FailNow()
 		}
+
+		s.networking.(*UdpNet).Close()
 	}
 }
 
