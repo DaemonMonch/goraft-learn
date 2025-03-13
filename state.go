@@ -57,8 +57,8 @@ type State struct {
 	hbCloseChan chan struct{}
 	acks        map[int]time.Time
 
-	//CANDIDATE
-	voteId int
+	voteId    int
+	voteEpoch int
 }
 
 func NewState(config *Config, networking Networking) *State {
@@ -70,6 +70,10 @@ func NewState(config *Config, networking Networking) *State {
 		curNode:      config.Nodes[0],
 	}
 	return s
+}
+
+func (s *State) randomizeElectTimeout() time.Duration {
+	return time.Duration(rand.Intn(150)+150) * time.Millisecond
 }
 
 func (s *State) Start(ctx context.Context) error {
@@ -100,6 +104,7 @@ func (s *State) Start(ctx context.Context) error {
 
 func (s *State) resetElectTimer() {
 	if s.electTimer != nil {
+		s.electTimeout = s.randomizeElectTimeout()
 		s.electTimer.Reset(s.electTimeout)
 	}
 }
@@ -185,16 +190,27 @@ func (s *State) startHeartbeat() {
 func (s *State) onHbMsg(msg RaftMessage) {
 	// logger.Printf("node [%s] state [%d] recv hb msg from node [%d], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId, s.leaderId)
 	s.lastHbTime = time.Now()
-	if s.epoch < msg.Epoch {
-		logger.Printf("node [%s] state [%d] recv hb msg, transit to [FOLLOWER], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId)
-		s.state = FOLLOWER_STATE
-		s.votes = 0
-		s.voteId = 0
-		s.epoch = msg.Epoch
-		s.leaderId = msg.NodeId
-		s.resetElectTimer()
+	if s.epoch <= msg.Epoch {
+		if s.state == FOLLOWER_STATE && s.leaderId != msg.NodeId {
+			logger.Printf("node [%s] state [%d] recv hb msg, change leader id from [%d] to [%d]\n", s.curNode.String(), s.state, s.leaderId, msg.NodeId)
+			s.votes = 0
+			s.voteId = 0
+			s.voteEpoch = msg.Epoch
+			s.epoch = msg.Epoch
+			s.leaderId = msg.NodeId
+		} else if s.state == CANDIDATE_STATE {
+			logger.Printf("node [%s] state [%d] recv hb msg, transit to [FOLLOWER], leader id [%d]\n", s.curNode.String(), s.state, msg.NodeId)
+			s.state = FOLLOWER_STATE
+			s.votes = 0
+			s.voteId = 0
+			s.voteEpoch = msg.Epoch
+			s.epoch = msg.Epoch
+			s.leaderId = msg.NodeId
+
+		}
 	}
 
+	s.resetElectTimer()
 	ack := NewAckMsg(s.epoch)
 	s.networking.Send(msg.from, ack)
 }
@@ -202,8 +218,8 @@ func (s *State) onHbMsg(msg RaftMessage) {
 func (s *State) onVoteMsg(msg RaftMessage) {
 	logger.Printf("node [%s] state [%d] recv vote req from node  [%d]\n", s.curNode.String(), s.state, msg.from.Id)
 	resp := NewVoteResp(s.epoch)
-	if s.voteId > 0 {
-		logger.Printf("node [%s] state [%d] already vote for node [%d], disagree vote req\n", s.curNode.String(), s.state, s.voteId)
+	if s.voteId > 0 && s.voteEpoch == msg.Epoch {
+		logger.Printf("node [%s] state [%d] already vote in epoch [%d] for node [%d], disagree vote req\n", s.curNode.String(), s.state, s.voteEpoch, s.voteId)
 		return
 	}
 	if s.epoch >= msg.Epoch {
@@ -214,6 +230,7 @@ func (s *State) onVoteMsg(msg RaftMessage) {
 		resp.VoteNodeId = msg.NodeId
 	}
 	s.voteId = resp.VoteNodeId
+	s.voteEpoch = msg.Epoch
 	//todo : other check
 	s.networking.Send(msg.from, resp)
 }

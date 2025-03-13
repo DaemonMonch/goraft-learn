@@ -231,3 +231,66 @@ func TestLeaderCrash(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestMultiCandidates(t *testing.T) {
+	config := &Config{
+		HeartbeatTime: 10,
+		AckTimeout:    20,
+		Nodes: []*Node{
+			{
+				Id:   1,
+				Addr: "127.0.0.1:18080",
+			},
+			{
+				Id:   2,
+				Addr: "127.0.0.1:18081",
+			},
+			{
+				Id:   3,
+				Addr: "127.0.0.1:18082",
+			},
+			{
+				Id:   4,
+				Addr: "127.0.0.1:18083",
+			},
+			{
+				Id:   5,
+				Addr: "127.0.0.1:18084",
+			},
+		},
+	}
+
+	configs := make([]*Config, 0)
+	configs = append(configs, config)
+	for i := 1; i < 5; i++ {
+		c := &Config{HeartbeatTime: config.HeartbeatTime, AckTimeout: config.AckTimeout}
+		c.Nodes = make([]*Node, 5)
+		copy(c.Nodes, config.Nodes)
+		t := c.Nodes[0]
+		c.Nodes[0] = c.Nodes[i]
+		c.Nodes[i] = t
+		configs = append(configs, c)
+	}
+
+	var states []*State
+	ctx, cancel := context.WithCancel(context.Background())
+	for _, c := range configs {
+		netw, _ := NewUdpNet(c)
+		s := NewState(c, netw)
+		states = append(states, s)
+	}
+
+	states[0].electTimeout = 50 * time.Millisecond
+	states[1].electTimeout = 50 * time.Millisecond
+	states[2].electTimeout = 50 * time.Millisecond
+	for _, s := range states {
+		go s.Start(ctx)
+	}
+	<-time.After(1 * time.Second)
+	cancel()
+	<-time.After(100 * time.Millisecond)
+	if states[3].leaderId > 0 && states[3].leaderId != states[4].leaderId {
+		t.Fail()
+	}
+
+}
