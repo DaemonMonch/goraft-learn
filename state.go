@@ -87,6 +87,8 @@ func (s *State) Start(ctx context.Context) error {
 		case msg := <-msgChan:
 			s.OnMessage(msg)
 		case <-ctx.Done():
+			logger.Printf("node [%s] state [%d] stop signal received\n", s.curNode, s.state)
+			s.hbCloseChan <- struct{}{}
 			return nil
 		}
 
@@ -160,8 +162,10 @@ func (s *State) startHeartbeat() {
 		for {
 			select {
 			case <-s.hbCloseChan:
+				logger.Printf("node [%s] state [%d] stop send hb\n", s.curNode.String(), s.state)
 				return
 			case <-t.C:
+				logger.Printf("node [%s] state [%d] send hb\n", s.curNode.String(), s.state)
 				s.networking.Broadcast(NewHb(s.epoch))
 			}
 		}
