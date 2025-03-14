@@ -40,7 +40,7 @@ type LogFile struct {
 }
 
 func (l *LogFile) validate() error {
-	panic("unimplemented")
+	return nil
 }
 
 func (l *LogFile) close() (string, error) {

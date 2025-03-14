@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"testing"
+	"unsafe"
 )
 
 func TestNewLogFile(t *testing.T) {
@@ -42,4 +43,15 @@ func Test1(t *testing.T) {
 	for _, mm := range m {
 		t.Log(string(mm))
 	}
+}
+
+func TestUptr(t *testing.T) {
+	type S struct {
+		s   uint8
+		ptr uintptr
+	}
+	d := []byte{11, 88, 22, 44}
+
+	s := (*S)(unsafe.Pointer(&d[0]))
+	t.Log(*((*uint8)(unsafe.Pointer(&s.ptr))))
 }
