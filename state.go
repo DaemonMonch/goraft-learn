@@ -29,6 +29,9 @@ type Config struct {
 	Nodes         []*Node `json:"nodes"`
 	HeartbeatTime int     `json:"heartbeatTime"`
 	AckTimeout    int     `json:"ackTimeout"`
+
+	MaxLogFileSize int64
+	LogFileDirPath string
 }
 
 type Node struct {
