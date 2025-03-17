@@ -2,6 +2,7 @@ package goraft
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -11,6 +12,10 @@ import (
 	"sort"
 	"strconv"
 	"syscall"
+)
+
+const (
+	LOG_HEADER_MASK = 16
 )
 
 type Log struct {
@@ -39,15 +44,28 @@ type LogFile struct {
 	crc           uint32
 }
 
+func (l *LogFile) last() (*Log, error) {
+	var log *Log
+	l.traverse(func(ep uint32, idx uint64, d []byte) error {
+		log = &Log{Epoch: int(ep), Index: int64(idx), Data: d}
+		return errors.New("")
+	})
+	if log == nil {
+		return nil, os.ErrNotExist
+	}
+
+	return log, nil
+}
+
 func (l *LogFile) validate() error {
 	return nil
 }
 
 func (l *LogFile) close() (string, error) {
-	l.endEpoch = binary.BigEndian.Uint32(l.mapFile[l.mapFileOffset-4:])
-	l.endIndex = binary.BigEndian.Uint64(l.mapFile[l.mapFileOffset-12:])
+	l.endEpoch = binary.LittleEndian.Uint32(l.mapFile[l.mapFileOffset-4:])
+	l.endIndex = binary.LittleEndian.Uint64(l.mapFile[l.mapFileOffset-12:])
 	l.crc = crc32.ChecksumIEEE(l.mapFile)
-	binary.BigEndian.PutUint32(l.mapFile[l.mapFileOffset:], l.crc)
+	binary.LittleEndian.PutUint32(l.mapFile[l.mapFileOffset:], l.crc)
 	l.mapFileOffset += 4
 	err := syscall.Munmap(l.mapFile)
 	if err != nil {
@@ -61,7 +79,7 @@ func (l *LogFile) close() (string, error) {
 	}
 
 	name := fmt.Sprintf("%d-%d_%d-%d.log", l.startEpoch, l.startIndex, l.endEpoch, l.endIndex)
-	err = os.Rename(path.Join(l.config.LogFileDirPath, fmt.Sprintf("%d-%d_", l.startEpoch, l.startIndex)), path.Join(l.config.LogFileDirPath, name))
+	err = os.Rename(path.Join(l.config.LogFileDirPath, "write"), path.Join(l.config.LogFileDirPath, name))
 	if err != nil {
 		return "", err
 	}
@@ -70,7 +88,7 @@ func (l *LogFile) close() (string, error) {
 }
 
 func newLogFile(config *Config, firstLog *Log) (*LogFile, error) {
-	f, err := os.OpenFile(path.Join(config.LogFileDirPath, fmt.Sprintf("%d-%d_", firstLog.Epoch, firstLog.Index)), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	f, err := os.OpenFile(path.Join(config.LogFileDirPath, "write"), os.O_CREATE|os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
@@ -97,19 +115,98 @@ func (l *LogFile) append(logs []*Log) {
 	for _, log := range logs {
 
 		l.mapFileOffset += int64(copy(l.mapFile[l.mapFileOffset:], log.Data))
-		binary.BigEndian.PutUint32(l.mapFile[l.mapFileOffset:], uint32(len(log.Data)))
+		binary.LittleEndian.PutUint32(l.mapFile[l.mapFileOffset:], uint32(len(log.Data)))
 		l.mapFileOffset += 4
-		binary.BigEndian.PutUint64(l.mapFile[l.mapFileOffset:], uint64(log.Index))
+		binary.LittleEndian.PutUint64(l.mapFile[l.mapFileOffset:], uint64(log.Index))
 		l.mapFileOffset += 8
-		binary.BigEndian.PutUint32(l.mapFile[l.mapFileOffset:], uint32(log.Epoch))
+		binary.LittleEndian.PutUint32(l.mapFile[l.mapFileOffset:], uint32(log.Epoch))
 		l.mapFileOffset += 4
+
+		l.endEpoch = uint32(log.Epoch)
+		l.endIndex = uint64(log.Index)
+	}
+
+}
+
+func initCurFile(config *Config) (*LogFile, error) {
+	curFile, err := os.OpenFile(path.Join(config.LogFileDirPath, "write"), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+
+	offsetFile, err := os.OpenFile(path.Join(config.LogFileDirPath, "write.offset"), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+	curFileOffset, err := syscall.Mmap(int(offsetFile.Fd()), 0, 8, syscall.PROT_WRITE|syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		return nil, err
+	}
+
+	err = curFile.Truncate(config.MaxLogFileSize + 4)
+	if err != nil {
+		return nil, err
+	}
+
+	mapFile, err := syscall.Mmap(int(curFile.Fd()), 0, int(config.MaxLogFileSize)+4, syscall.PROT_WRITE|syscall.PROT_READ, syscall.MAP_SHARED)
+
+	if err != nil {
+		return nil, err
+	}
+
+	logFile := &LogFile{
+		f:             curFile,
+		mapFileOffset: int64(binary.LittleEndian.Uint64(curFileOffset)),
+		filePath:      path.Join(config.LogFileDirPath, "write"),
+		config:        config,
+		mapFile:       mapFile,
+	}
+
+	return logFile, nil
+}
+
+func (l *LogFile) flush() error {
+	return nil
+}
+
+func (l *LogFile) find(epoch int, index int64) (*Log, error) {
+	var log *Log
+	l.traverse(func(ep uint32, idx uint64, d []byte) error {
+		if ep == uint32(epoch) && idx == uint64(index) {
+			log = &Log{Epoch: epoch, Index: index, Data: d}
+			return errors.New("")
+		}
+		return nil
+	})
+	if log == nil {
+		return nil, os.ErrNotExist
+	}
+
+	return log, nil
+
+}
+
+func (l *LogFile) traverse(f func(epoch uint32, index uint64, data []byte) error) {
+
+	for offset := l.mapFileOffset; offset > 0; offset -= (LOG_HEADER_MASK + int64(binary.LittleEndian.Uint32(l.mapFile[offset-LOG_HEADER_MASK:]))) {
+		ep := binary.LittleEndian.Uint32(l.mapFile[offset-4:])
+		idx := binary.LittleEndian.Uint64(l.mapFile[offset-12:])
+		len := binary.LittleEndian.Uint32(l.mapFile[offset-LOG_HEADER_MASK:])
+		logger.Println(len)
+		d := l.mapFile[offset-int64(len)-LOG_HEADER_MASK : offset-LOG_HEADER_MASK]
+
+		err := f(ep, idx, d)
+		if err != nil {
+			return
+		}
 	}
 }
 
 type FileLogStore struct {
-	config  *Config
-	files   []*LogFile
-	curFile *LogFile
+	config        *Config
+	files         []*LogFile
+	curFile       *LogFile
+	curFileOffset []byte
 }
 
 func NewFileLogStore(config *Config) *FileLogStore {
@@ -147,13 +244,19 @@ func (s *FileLogStore) Init() error {
 		s.files = append(s.files, logFile)
 	}
 	sort.Sort(LogFiles(s.files))
+
+	s.curFile, err = initCurFile(s.config)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *FileLogStore) Append(logs []*Log) error {
 	var size int
 	for _, log := range logs {
-		size += len(log.Data) + 16
+		size += len(log.Data) + LOG_HEADER_MASK
 	}
 	if s.curFile.mapFileOffset+int64(size) > s.config.MaxLogFileSize {
 		_, err := s.curFile.close()
@@ -161,18 +264,33 @@ func (s *FileLogStore) Append(logs []*Log) error {
 			return err
 		}
 		s.files = append(s.files, s.curFile)
-		f, err := s.newLogFile(logs[0])
+		f, err := newLogFile(s.config, logs[0])
 		if err != nil {
 			return err
 		}
 		s.curFile = f
 	}
 	s.curFile.append(logs)
+
 	return nil
 }
 
-func (s *FileLogStore) newLogFile(firstLog *Log) (*LogFile, error) {
-	return newLogFile(s.config, firstLog)
+func (s *FileLogStore) Last() (*Log, error) {
+	return s.curFile.last()
+}
+
+func (s *FileLogStore) Find(epoch int, index int64) (*Log, error) {
+	log, _ := s.curFile.find(epoch, index)
+	if log != nil {
+		return log, nil
+	}
+
+	fileIdex := sort.Search(len(s.files), func(i int) bool {
+		n := s.files[i]
+		return (n.startEpoch > uint32(epoch) && n.startIndex > uint64(index)) || (n.endEpoch >= uint32(epoch) && n.endIndex >= uint64(index))
+	})
+
+	return s.files[fileIdex].find(epoch, index)
 }
 
 type LogFiles []*LogFile
@@ -181,4 +299,8 @@ func (l LogFiles) Len() int      { return len(l) }
 func (l LogFiles) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
 func (l LogFiles) Less(i, j int) bool {
 	return l[i].startEpoch < l[j].startEpoch && l[i].startIndex < l[j].startIndex
+}
+
+func leftMostBit(i int) int {
+	return i
 }
