@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"syscall"
+	"unsafe"
 )
 
 const (
@@ -80,9 +81,12 @@ func (l *LogFile) close() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	l.f = nil
+	l.mapFile = nil
 
 	name := fmt.Sprintf("%d-%d_%d-%d.log", l.startEpoch, l.startIndex, l.endEpoch, l.endIndex)
-	err = os.Rename(path.Join(l.config.LogFileDirPath, "write"), path.Join(l.config.LogFileDirPath, name))
+	l.filePath = path.Join(l.config.LogFileDirPath, name)
+	err = os.Rename(path.Join(l.config.LogFileDirPath, "write"), l.filePath)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +134,10 @@ func (l *LogFile) append(logs []*Log) {
 		l.endEpoch = uint32(log.Epoch)
 		l.endIndex = uint64(log.Index)
 
-		binary.LittleEndian.PutUint64(l.mapOffsetFile, uint64(l.mapFileOffset))
+		// logger.Printf("mapOffsetFile [%d]\n", len(l.mapOffsetFile))
+		// binary.LittleEndian.PutUint64(l.mapOffsetFile, uint64(l.mapFileOffset))
+		ptr := unsafe.Pointer(&l.mapOffsetFile[0])
+		*((*uint64)(ptr)) = uint64(l.mapFileOffset)
 	}
 
 }
@@ -145,6 +152,12 @@ func initCurFile(config *Config) (*LogFile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	err = offsetFile.Truncate(8)
+	if err != nil {
+		return nil, err
+	}
+
 	curFileOffset, err := syscall.Mmap(int(offsetFile.Fd()), 0, 8, syscall.PROT_WRITE|syscall.PROT_READ, syscall.MAP_SHARED)
 	if err != nil {
 		return nil, err
@@ -179,6 +192,9 @@ func (l *LogFile) flush() error {
 }
 
 func (l *LogFile) find(epoch int, index int64) (*Log, error) {
+	if l.f == nil {
+		l.init()
+	}
 	var log *Log
 	l.traverse(func(ep uint32, idx uint64, d []byte) error {
 		if ep == uint32(epoch) && idx == uint64(index) {
@@ -195,13 +211,36 @@ func (l *LogFile) find(epoch int, index int64) (*Log, error) {
 
 }
 
+func (l *LogFile) init() error {
+	logger.Printf("init for file [%s]\n", l.filePath)
+	f, err := os.OpenFile(l.filePath, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	logger.Printf("file size [%d]\n", stat.Size())
+	mapFile, err := syscall.Mmap(int(f.Fd()), 0, int(l.config.MaxLogFileSize), syscall.PROT_READ, syscall.MAP_SHARED)
+
+	if err != nil {
+		return err
+	}
+
+	l.f = f
+	l.mapFile = mapFile
+	l.mapFileOffset = stat.Size() - 4
+	logger.Printf("mapFileOffset [%d]\n", stat.Size()-4)
+	return nil
+}
+
 func (l *LogFile) traverse(f func(epoch uint32, index uint64, data []byte) error) {
 
 	for offset := l.mapFileOffset; offset > 0; offset -= (LOG_HEADER_MASK + int64(binary.LittleEndian.Uint32(l.mapFile[offset-LOG_HEADER_MASK:]))) {
 		ep := binary.LittleEndian.Uint32(l.mapFile[offset-4:])
 		idx := binary.LittleEndian.Uint64(l.mapFile[offset-12:])
 		len := binary.LittleEndian.Uint32(l.mapFile[offset-LOG_HEADER_MASK:])
-		logger.Println(len)
 		d := l.mapFile[offset-int64(len)-LOG_HEADER_MASK : offset-LOG_HEADER_MASK]
 
 		err := f(ep, idx, d)
@@ -262,23 +301,23 @@ func (s *FileLogStore) Init() error {
 }
 
 func (s *FileLogStore) Append(logs []*Log) error {
-	var size int
 	for _, log := range logs {
-		size += len(log.Data) + LOG_HEADER_MASK
-	}
-	if s.curFile.mapFileOffset+int64(size) > s.config.MaxLogFileSize {
-		_, err := s.curFile.close()
-		if err != nil {
-			return err
+		if s.curFile.mapFileOffset+int64(len(log.Data)+LOG_HEADER_MASK) > s.config.MaxLogFileSize {
+			_, err := s.curFile.close()
+			if err != nil {
+				return err
+			}
+			s.files = append(s.files, s.curFile)
+			f, err := newLogFile(s.config, logs[0])
+			f.mapOffsetFile = s.curFile.mapOffsetFile
+			f.offsetFile = s.curFile.offsetFile
+			if err != nil {
+				return err
+			}
+			s.curFile = f
 		}
-		s.files = append(s.files, s.curFile)
-		f, err := newLogFile(s.config, logs[0])
-		if err != nil {
-			return err
-		}
-		s.curFile = f
+		s.curFile.append([]*Log{log})
 	}
-	s.curFile.append(logs)
 
 	return nil
 }
@@ -298,6 +337,7 @@ func (s *FileLogStore) Find(epoch int, index int64) (*Log, error) {
 		return (n.startEpoch > uint32(epoch) && n.startIndex > uint64(index)) || (n.endEpoch >= uint32(epoch) && n.endIndex >= uint64(index))
 	})
 
+	logger.Printf("find in achieved file index [%d]\n", fileIdex)
 	return s.files[fileIdex].find(epoch, index)
 }
 

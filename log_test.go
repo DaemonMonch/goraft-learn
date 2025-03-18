@@ -1,6 +1,7 @@
 package goraft
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -158,4 +159,55 @@ func TestSearch(t *testing.T) {
 	if i != 0 {
 		t.Fatal(i)
 	}
+}
+
+func TestLogStore(t *testing.T) {
+	// defer func() {
+	// 	os.Remove("write")
+	// 	os.Remove("write.offset")
+	// 	fs, _ := filepath.Glob("*.log")
+	// 	for _, v := range fs {
+	// 		os.Remove(v)
+	// 	}
+	// }()
+	logs := genLogs(1, 500)
+	store := NewFileLogStore(&Config{LogFileDirPath: ".", MaxLogFileSize: 1024})
+	err := store.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Append(logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := store.Find(1, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l.Epoch != 1 || l.Index != 9 || string(l.Data) != "1-9" {
+		t.Fail()
+	}
+
+	l, err = store.Find(1, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l.Epoch != 1 || l.Index != 99 || string(l.Data) != "1-99" {
+		t.Fail()
+	}
+
+}
+
+func genLogs(epoch, count int) []*Log {
+	var logs []*Log
+	for i := 1; i <= epoch; i++ {
+		for j := 1; j <= count; j++ {
+			logs = append(logs, &Log{Epoch: i, Index: int64(j), Data: []byte(fmt.Sprintf("%d-%d", i, j))})
+		}
+	}
+	return logs
 }
