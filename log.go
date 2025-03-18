@@ -308,7 +308,7 @@ func (s *FileLogStore) Append(logs []*Log) error {
 				return err
 			}
 			s.files = append(s.files, s.curFile)
-			f, err := newLogFile(s.config, logs[0])
+			f, err := newLogFile(s.config, log)
 			f.mapOffsetFile = s.curFile.mapOffsetFile
 			f.offsetFile = s.curFile.offsetFile
 			if err != nil {

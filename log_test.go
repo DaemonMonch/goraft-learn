@@ -3,6 +3,7 @@ package goraft
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"testing"
@@ -162,15 +163,15 @@ func TestSearch(t *testing.T) {
 }
 
 func TestLogStore(t *testing.T) {
-	// defer func() {
-	// 	os.Remove("write")
-	// 	os.Remove("write.offset")
-	// 	fs, _ := filepath.Glob("*.log")
-	// 	for _, v := range fs {
-	// 		os.Remove(v)
-	// 	}
-	// }()
-	logs := genLogs(1, 500)
+	defer func() {
+		os.Remove("write")
+		os.Remove("write.offset")
+		fs, _ := filepath.Glob("*.log")
+		for _, v := range fs {
+			os.Remove(v)
+		}
+	}()
+	logs := genLogs(1, 100)
 	store := NewFileLogStore(&Config{LogFileDirPath: ".", MaxLogFileSize: 1024})
 	err := store.Init()
 	if err != nil {
@@ -200,13 +201,24 @@ func TestLogStore(t *testing.T) {
 		t.Fail()
 	}
 
+	l, err = store.Find(1, 383)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l.Epoch != 1 || l.Index != 383 || string(l.Data) != "1-383" {
+		t.Fail()
+	}
+
 }
 
 func genLogs(epoch, count int) []*Log {
 	var logs []*Log
+	idx := 1
 	for i := 1; i <= epoch; i++ {
-		for j := 1; j <= count; j++ {
-			logs = append(logs, &Log{Epoch: i, Index: int64(j), Data: []byte(fmt.Sprintf("%d-%d", i, j))})
+		for j := 0; j < count; j++ {
+			logs = append(logs, &Log{Epoch: i, Index: int64(idx), Data: []byte(fmt.Sprintf("%d-%d", i, j))})
+			idx++
 		}
 	}
 	return logs
