@@ -1,7 +1,7 @@
 package goraft
 
 import (
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,7 +47,7 @@ func TestNewLogFile(t *testing.T) {
 
 func Test1(t *testing.T) {
 	r, _ := regexp.Compile("([0-9]+)-([0-9]+)_([0-9]+)-([0-9]+)")
-	m := r.FindSubmatch([]byte("1-20_2-100.log"))
+	m := r.FindStringSubmatch("1-20_2-100.log")
 
 	for _, mm := range m {
 		t.Log(string(mm))
@@ -162,6 +162,89 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func BenchmarkLogStore1GFind(b *testing.B) {
+	logger.SetOutput(io.Discard)
+	store := NewFileLogStore(&Config{LogFileDirPath: ".", MaxLogFileSize: 1024 * 1024 * 1024})
+	err := store.Init()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for i := 0; i < 1; i++ {
+		store.Find(1, 10)
+	}
+	// b.ReportMetric()
+
+	// b.ResetTimer()
+	b.Run("find-1", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			store.Find(1, int64(1))
+		}
+	})
+	// b.Log(b.Elapsed())
+
+	// b.ResetTimer()
+	b.Run("find-2", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			store.Find(1, int64(512))
+		}
+	})
+
+	b.Run("find-3", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			store.Find(1, int64(1023))
+		}
+	})
+	// b.Log(b.Elapsed())
+}
+
+func TestLogStore1GOnlyFind(t *testing.T) {
+	store := NewFileLogStore(&Config{LogFileDirPath: ".", MaxLogFileSize: 1024 * 1024 * 1024})
+	err := store.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Find(1, 100)
+}
+
+func TestLogStore1G(t *testing.T) {
+	// defer func() {
+	// 	os.Remove("write")
+	// 	os.Remove("write.offset")
+	// 	fs, _ := filepath.Glob("*.log")
+	// 	for _, v := range fs {
+	// 		os.Remove(v)
+	// 	}
+	// }()
+
+	logs := genLogs(1, 1024)
+	var s int
+	for _, v := range logs {
+		s += len(v.Data) + 12
+	}
+	// t.Log(s)
+	store := NewFileLogStore(&Config{LogFileDirPath: ".", MaxLogFileSize: 1024 * 1024 * 1024})
+	err := store.Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Append(logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := store.Find(1, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l.Epoch != 1 || l.Index != 9 {
+		t.Fail()
+	}
+
+}
+
 func TestLogStore(t *testing.T) {
 	defer func() {
 		os.Remove("write")
@@ -215,9 +298,11 @@ func TestLogStore(t *testing.T) {
 func genLogs(epoch, count int) []*Log {
 	var logs []*Log
 	idx := 1
+
+	data := [1024 * 1024]byte{}
 	for i := 1; i <= epoch; i++ {
 		for j := 0; j < count; j++ {
-			logs = append(logs, &Log{Epoch: i, Index: int64(idx), Data: []byte(fmt.Sprintf("%d-%d", i, j))})
+			logs = append(logs, &Log{Epoch: i, Index: int64(idx), Data: data[:]})
 			idx++
 		}
 	}

@@ -270,18 +270,21 @@ func (s *FileLogStore) Init() error {
 
 	r, _ := regexp.Compile("([0-9]+)-([0-9]+)_([0-9]+)-([0-9]+)")
 	for _, log := range logs {
-		name := filepath.Base(log)
-		m := r.FindStringSubmatch(name)
-		se, _ := strconv.Atoi(m[0])
-		si, _ := strconv.ParseInt(m[1], 10, 0)
-		ee, _ := strconv.Atoi(m[2])
-		ei, _ := strconv.ParseInt(m[3], 10, 0)
+		logger.Printf("load log file %s\n", log)
+		// name := filepath.Base(log)
+		m := r.FindStringSubmatch(log)
+		logger.Printf("%v \n", m)
+		se, _ := strconv.Atoi(m[1])
+		si, _ := strconv.ParseInt(m[2], 10, 0)
+		ee, _ := strconv.Atoi(m[3])
+		ei, _ := strconv.ParseInt(m[4], 10, 0)
 		logFile := &LogFile{
 			startEpoch: uint32(se),
 			startIndex: uint64(si),
 			endEpoch:   uint32(ee),
 			endIndex:   uint64(ei),
 			filePath:   path.Join(s.config.LogFileDirPath, log),
+			config:     s.config,
 		}
 		err := logFile.validate()
 		if err != nil {
@@ -291,7 +294,8 @@ func (s *FileLogStore) Init() error {
 		s.files = append(s.files, logFile)
 	}
 	sort.Sort(LogFiles(s.files))
-
+	logger.Printf("Achieved log file size %d\n", len(s.files))
+	logger.Printf("%d %d %d %d\n", s.files[0].startEpoch, s.files[0].startIndex, s.files[0].endEpoch, s.files[0].endIndex)
 	s.curFile, err = initCurFile(s.config)
 	if err != nil {
 		return err
