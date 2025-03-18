@@ -336,13 +336,16 @@ func (s *FileLogStore) Find(epoch int, index int64) (*Log, error) {
 		return log, nil
 	}
 
-	fileIdex := sort.Search(len(s.files), func(i int) bool {
+	fileIndex := sort.Search(len(s.files), func(i int) bool {
 		n := s.files[i]
 		return (n.startEpoch > uint32(epoch) && n.startIndex > uint64(index)) || (n.endEpoch >= uint32(epoch) && n.endIndex >= uint64(index))
 	})
 
-	logger.Printf("find in achieved file index [%d]\n", fileIdex)
-	return s.files[fileIdex].find(epoch, index)
+	logger.Printf("find in achieved file index [%d]\n", fileIndex)
+	if fileIndex == len(s.files) {
+		return s.curFile.find(epoch, index)
+	}
+	return s.files[fileIndex].find(epoch, index)
 }
 
 type LogFiles []*LogFile
@@ -353,6 +356,6 @@ func (l LogFiles) Less(i, j int) bool {
 	return l[i].endEpoch < l[j].startEpoch || l[i].endIndex < l[j].startIndex
 }
 
-func leftMostBit(i int) int {
+func leadingZeros(i int) int {
 	return i
 }
