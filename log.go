@@ -42,6 +42,9 @@ type LogFile struct {
 	mapFile       []byte
 	mapFileOffset int64
 	crc           uint32
+
+	offsetFile    *os.File
+	mapOffsetFile []byte
 }
 
 func (l *LogFile) last() (*Log, error) {
@@ -84,6 +87,8 @@ func (l *LogFile) close() (string, error) {
 		return "", err
 	}
 
+	binary.LittleEndian.PutUint64(l.mapOffsetFile, 0)
+
 	return name, nil
 }
 
@@ -124,6 +129,8 @@ func (l *LogFile) append(logs []*Log) {
 
 		l.endEpoch = uint32(log.Epoch)
 		l.endIndex = uint64(log.Index)
+
+		binary.LittleEndian.PutUint64(l.mapOffsetFile, uint64(l.mapFileOffset))
 	}
 
 }
@@ -160,6 +167,8 @@ func initCurFile(config *Config) (*LogFile, error) {
 		filePath:      path.Join(config.LogFileDirPath, "write"),
 		config:        config,
 		mapFile:       mapFile,
+		offsetFile:    offsetFile,
+		mapOffsetFile: curFileOffset,
 	}
 
 	return logFile, nil
@@ -203,10 +212,9 @@ func (l *LogFile) traverse(f func(epoch uint32, index uint64, data []byte) error
 }
 
 type FileLogStore struct {
-	config        *Config
-	files         []*LogFile
-	curFile       *LogFile
-	curFileOffset []byte
+	config  *Config
+	files   []*LogFile
+	curFile *LogFile
 }
 
 func NewFileLogStore(config *Config) *FileLogStore {
@@ -298,7 +306,7 @@ type LogFiles []*LogFile
 func (l LogFiles) Len() int      { return len(l) }
 func (l LogFiles) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
 func (l LogFiles) Less(i, j int) bool {
-	return l[i].startEpoch < l[j].startEpoch && l[i].startIndex < l[j].startIndex
+	return l[i].endEpoch < l[j].startEpoch || l[i].endIndex < l[j].startIndex
 }
 
 func leftMostBit(i int) int {

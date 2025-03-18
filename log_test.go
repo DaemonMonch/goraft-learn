@@ -73,6 +73,27 @@ func TestSearch1(t *testing.T) {
 	i := sort.Search(len(a), func(i int) bool { return a[i] >= f })
 	t.Log(i)
 }
+
+func TestSort(t *testing.T) {
+	ls := LogFiles([]*LogFile{
+		&LogFile{startEpoch: 1, endEpoch: 1, startIndex: 21, endIndex: 40},
+		&LogFile{startEpoch: 1, endEpoch: 1, startIndex: 1, endIndex: 20},
+		&LogFile{startEpoch: 1, endEpoch: 2, startIndex: 41, endIndex: 60},
+		&LogFile{startEpoch: 5, endEpoch: 6, startIndex: 81, endIndex: 100},
+		&LogFile{startEpoch: 2, endEpoch: 5, startIndex: 61, endIndex: 80},
+		&LogFile{startEpoch: 8, endEpoch: 12, startIndex: 131, endIndex: 150},
+		&LogFile{startEpoch: 6, endEpoch: 6, startIndex: 101, endIndex: 130},
+	})
+
+	sort.Sort(ls)
+	for _, l := range ls {
+		t.Log(l.startIndex)
+	}
+	if ls[0].startIndex != 1 {
+		t.Fail()
+	}
+}
+
 func TestSearch(t *testing.T) {
 	ls := LogFiles([]*LogFile{
 		&LogFile{startEpoch: 1, endEpoch: 1, startIndex: 1, endIndex: 20},
